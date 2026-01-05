@@ -12,4 +12,3 @@ faiss-cpu
 python-docx
 pdfplumber
 streamlit-gsheets
-st-gsheets-connection

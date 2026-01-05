@@ -1,14 +1,3 @@
-pandas
-numpy
 streamlit
-openpyxl
-xlsxwriter
-google-generativeai
-langchain
-langchain-google-genai
-langchain-community
-pypdf
-faiss-cpu
-python-docx
-pdfplumber
+pandas
 streamlit-gsheets

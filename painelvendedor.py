@@ -121,7 +121,8 @@ else:
     if st.session_state['usuario_tipo'].lower() == "gerente":
         titulo_prefixo = "Gerência de Carteira"
     
-    st.title(f"🏭 {titulo_prefixo}: {st.session_state['usuario_nome']}")
+    # REMOVIDO O EMOJI DAQUI
+    st.title(f"{titulo_prefixo}: {st.session_state['usuario_nome']}")
 
     df_total = carregar_dados_pedidos()
 
@@ -157,16 +158,14 @@ else:
         if df_filtrado.empty:
             st.info(f"Nenhum pedido pendente encontrado.")
         else:
-            # --- 3. TRATAMENTO DE DADOS (PESO E DATA) ---
+            # --- 3. TRATAMENTO DE DADOS ---
             
             # Peso
             df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
             df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
             
-            # Data (CORREÇÃO AQUI)
-            # Converte para data forçando o dia primeiro (dayfirst=True)
+            # Data
             df_filtrado['Prazo'] = pd.to_datetime(df_filtrado['Prazo'], dayfirst=True, errors='coerce')
-            # Formata de volta para String no padrão BR (dd/mm/aaaa) para exibir corretamente
             df_filtrado['Prazo'] = df_filtrado['Prazo'].dt.strftime('%d/%m/%Y').fillna("-")
 
             # Ordem das colunas
@@ -207,7 +206,6 @@ else:
                 hide_index=True,
                 use_container_width=True,
                 column_config={
-                    # Agora usamos TextColumn porque já formatamos a data como string na mão
                     "Prazo": st.column_config.TextColumn("Previsão"),
                 }
             )

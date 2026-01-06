@@ -89,8 +89,6 @@ def formatar_peso_brasileiro(valor):
         return str(valor)
 
 # --- FUNÇÃO PRINCIPAL DE EXIBIÇÃO DA CARTEIRA ---
-# Esta função isola toda a lógica de mostrar os pedidos.
-# Assim podemos chamá-la dentro da aba do Admin ou na tela principal do Vendedor.
 def exibir_carteira_pedidos():
     titulo_prefixo = "Carteira de Pedidos"
     if st.session_state['usuario_tipo'].lower() == "gerente":
@@ -116,6 +114,7 @@ def exibir_carteira_pedidos():
             filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
             
             if filtro_vendedor != "Todos":
+                # Admin continua usando filtro exato para poder escolher um específico da lista
                 df_filtrado = df_total[df_total["Vendedor Correto"].astype(str) == filtro_vendedor].copy()
             else:
                 df_filtrado = df_total.copy()
@@ -126,7 +125,10 @@ def exibir_carteira_pedidos():
             else:
                 df_filtrado = pd.DataFrame()
         else:
-            df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
+            # --- MUDANÇA AQUI ---
+            # Antes: Usava == (Igualdade estrita)
+            # Agora: Usa str.contains (Contém) com regex=False para evitar erro com pontos
+            df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower().str.contains(nome_filtro.lower(), regex=False)].copy()
 
         if df_filtrado.empty:
             st.info(f"Nenhum pedido pendente encontrado.")

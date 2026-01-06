@@ -29,9 +29,11 @@ def carregar_dados_pedidos():
             df = conn.read(worksheet=aba, ttl=0)
             df['Máquina/Processo'] = aba
             
-            cols_necessarias = ["Número do Pedido", "Cliente Correto", "Produto", "Quantidade", "Prazo", "Vendedor Correto"]
+            # Adicionei "Gerente Correto" na lista de leitura
+            cols_necessarias = ["Número do Pedido", "Cliente Correto", "Produto", "Quantidade", "Prazo", "Vendedor Correto", "Gerente Correto"]
             cols_existentes = [c for c in cols_necessarias if c in df.columns]
             
+            # Só carrega se tiver as colunas principais
             if "Vendedor Correto" in cols_existentes:
                 df_limpo = df[cols_existentes + ['Máquina/Processo']].copy()
                 dados_consolidados.append(df_limpo)
@@ -42,32 +44,19 @@ def carregar_dados_pedidos():
         return pd.concat(dados_consolidados, ignore_index=True)
     return pd.DataFrame()
 
-# --- FUNÇÃO DE FORMATAÇÃO PERSONALIZADA (NOVA) ---
+# --- FUNÇÃO DE FORMATAÇÃO ---
 def formatar_peso_brasileiro(valor):
-    """
-    Recebe um número (ex: 1.0 ou 9.65) e retorna texto (ex: '1' ou '9,65')
-    """
     try:
-        if pd.isna(valor) or valor == "":
-            return "0"
-        
-        # 1. Formata para ter 3 casas decimais fixas (ex: 9.6 -> "9.600")
+        if pd.isna(valor) or valor == "": return "0"
         texto = f"{float(valor):.3f}"
-        
-        # 2. Troca ponto por vírgula (ex: "9.600" -> "9,600")
         texto = texto.replace('.', ',')
-        
-        # 3. Remove zeros à direita (ex: "9,600" -> "9,6")
         texto = texto.rstrip('0')
-        
-        # 4. Se sobrou uma vírgula no final (caso de inteiros), remove ela (ex: "1," -> "1")
         texto = texto.rstrip(',')
-        
         return texto
     except:
         return str(valor)
 
-# --- ESTADO DA SESSÃO (LOGIN) ---
+# --- ESTADO DA SESSÃO ---
 if 'logado' not in st.session_state:
     st.session_state['logado'] = False
     st.session_state['usuario_nome'] = ""
@@ -77,7 +66,7 @@ if 'logado' not in st.session_state:
 # --- TELA DE LOGIN ---
 if not st.session_state['logado']:
     st.title("🔒 Login - PCP Dox Brasil")
-    st.markdown("Entre com suas credenciais para visualizar sua carteira.")
+    st.markdown("Entre com suas credenciais para visualizar a carteira.")
     
     col1, col2, col3 = st.columns([1, 1, 2])
     with col1:
@@ -86,8 +75,8 @@ if not st.session_state['logado']:
         
         if st.button("Acessar Sistema"):
             df_users = carregar_usuarios()
-            
             if not df_users.empty:
+                # Busca usuário e senha (ignora maiúsculas/minúsculas no login)
                 usuario_encontrado = df_users[
                     (df_users['Login'].str.lower() == usuario_input.lower()) & 
                     (df_users['Senha'] == senha_input)
@@ -96,9 +85,11 @@ if not st.session_state['logado']:
                 if not usuario_encontrado.empty:
                     dados_user = usuario_encontrado.iloc[0]
                     st.session_state['logado'] = True
-                    # Pega apenas o primeiro nome para a saudação
+                    # Pega o primeiro nome para saudação
                     st.session_state['usuario_nome'] = dados_user['Nome Vendedor'].split()[0]
+                    # Nome completo para filtro na planilha
                     st.session_state['usuario_filtro'] = dados_user['Nome Vendedor']
+                    # Tipo (Admin, Gerente, Vendedor)
                     st.session_state['usuario_tipo'] = dados_user['Tipo']
                     st.rerun()
                 else:
@@ -106,99 +97,106 @@ if not st.session_state['logado']:
             else:
                 st.error("Erro ao conectar com base de usuários.")
 
-# --- TELA PRINCIPAL (LOGADO) ---
+# --- TELA PRINCIPAL ---
 else:
     with st.sidebar:
         st.write(f"Bem-vindo, **{st.session_state['usuario_nome'].upper()}**")
+        st.caption(f"Perfil: {st.session_state['usuario_tipo']}")
         
         if st.button("Sair"):
             st.session_state['logado'] = False
             st.session_state['usuario_nome'] = ""
-            st.session_state['usuario_filtro'] = ""
             st.rerun()
         
         st.divider()
         if st.button("🔄 Atualizar Dados"):
             st.cache_data.clear()
             st.rerun()
-        
-        st.caption("Dados atualizados conforme planilha do PCP.")
 
-    # Título da Página
-    st.title(f"🏭 Carteira de Pedidos: {st.session_state['usuario_nome']}")
+    # Define o título baseado no nível de acesso
+    titulo_prefixo = "Carteira de Pedidos"
+    if st.session_state['usuario_tipo'].lower() == "gerente":
+        titulo_prefixo = "Gerência de Carteira"
+    
+    st.title(f"🏭 {titulo_prefixo}: {st.session_state['usuario_nome']}")
 
     # Carrega Dados
     df_total = carregar_dados_pedidos()
 
     if df_total is not None and not df_total.empty:
         
-        # Filtros de Segurança
-        usuario_eh_admin = st.session_state['usuario_tipo'].lower() == "admin"
+        tipo_usuario = st.session_state['usuario_tipo'].lower()
+        nome_filtro = st.session_state['usuario_filtro']
         
-        if usuario_eh_admin:
+        # --- LÓGICA DE FILTRO POR TIPO DE USUÁRIO ---
+        if tipo_usuario == "admin":
+            # Admin vê tudo
             vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().astype(str).unique())
-            filtro_vendedor = st.selectbox("Filtrar Vendedor (Visão Admin)", ["Todos"] + vendedores_unicos)
+            filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
             
             if filtro_vendedor != "Todos":
                 df_filtrado = df_total[df_total["Vendedor Correto"].astype(str) == filtro_vendedor].copy()
             else:
                 df_filtrado = df_total.copy()
+                
+        elif tipo_usuario == "gerente":
+            # Gerente vê onde ele é o "Gerente Correto"
+            # Verifica se a coluna existe para evitar erro
+            if "Gerente Correto" in df_total.columns:
+                df_filtrado = df_total[df_total["Gerente Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
+            else:
+                st.error("Coluna 'Gerente Correto' não encontrada nas planilhas.")
+                df_filtrado = pd.DataFrame()
+                
         else:
-            # Vendedor Comum: Filtra pelo nome dele
-            nome_para_filtrar = st.session_state['usuario_filtro']
-            df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower() == nome_para_filtrar.lower()].copy()
+            # Vendedor vê onde ele é o "Vendedor Correto"
+            df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
 
-        # Exibe se estiver vazio
+        # --- EXIBIÇÃO ---
         if df_filtrado.empty:
-            st.info(f"Nenhum pedido pendente encontrado na sua carteira.")
+            st.info(f"Nenhum pedido pendente encontrado.")
         else:
-            # --- APLICAÇÃO DAS SUAS SOLICITAÇÕES ---
-            
-            # 1. Converte a coluna Quantidade para número para somar no KPI
+            # 1. Cria coluna de Peso Formatada
             df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
-            
-            # 2. Cria uma coluna NOVA formatada como TEXTO (para ficar exatamente como você quer: 9,6)
             df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
             
-            # 3. Remove a coluna do Vendedor se NÃO for Admin
-            if not usuario_eh_admin:
-                if "Vendedor Correto" in df_filtrado.columns:
-                    df_filtrado = df_filtrado.drop(columns=["Vendedor Correto"])
+            # 2. Define colunas visíveis e ORDEM (Peso depois de Produto)
+            colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
             
-            # 4. Remove colunas auxiliares que usamos só para conta
-            if "Quantidade" in df_filtrado.columns:
-                df_filtrado = df_filtrado.drop(columns=["Quantidade"])
+            # Se for Admin ou Gerente, adiciona a coluna do Vendedor para saberem de quem é
+            if tipo_usuario in ["admin", "gerente"]:
+                colunas_visiveis.insert(5, "Vendedor Correto") # Insere antes do Prazo
             
-            # --- CARDS DE KPI ---
+            # Filtra apenas as colunas que queremos mostrar, na ordem certa
+            # (Garante que as colunas existam antes de selecionar)
+            colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
+            df_final = df_filtrado[colunas_finais]
+
+            # 3. KPI Cards
             total_pedidos = len(df_filtrado)
             total_peso = df_filtrado['Quantidade_Num'].sum()
-            # Formata o total do KPI também (ex: 1.234,56)
             total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
             kpi1, kpi2 = st.columns(2)
-            kpi1.metric("📦 Pedidos Pendentes", total_pedidos)
-            kpi2.metric("⚖️ Peso Total (Tons)", total_peso_str)
+            kpi1.metric("📦 Pedidos na Visão", total_pedidos)
+            kpi2.metric("⚖️ Volume Total (Tons)", total_peso_str)
             
             st.divider()
             
-            # Filtro de Máquina
-            maquinas_disponiveis = df_filtrado['Máquina/Processo'].unique()
-            maquina_sel = st.multiselect("Filtrar por Processo:", maquinas_disponiveis, default=maquinas_disponiveis)
-            
-            df_final = df_filtrado[df_filtrado['Máquina/Processo'].isin(maquina_sel)]
-            
-            # Remove a coluna auxiliar numérica antes de mostrar a tabela
-            df_final = df_final.drop(columns=['Quantidade_Num'])
+            # 4. Filtro de Máquina na tela
+            if 'Máquina/Processo' in df_final.columns:
+                maquinas_disponiveis = df_final['Máquina/Processo'].unique()
+                maquina_sel = st.multiselect("Filtrar por Processo:", maquinas_disponiveis, default=maquinas_disponiveis)
+                df_final = df_final[df_final['Máquina/Processo'].isin(maquina_sel)]
 
-            # --- TABELA FINAL ---
+            # 5. Tabela Final
             st.dataframe(
                 df_final, 
                 hide_index=True,
                 use_container_width=True,
                 column_config={
                     "Prazo": st.column_config.DateColumn("Previsão", format="DD/MM/YYYY"),
-                    # Não configuramos "Peso (ton)" aqui porque ele já foi formatado como texto na mão
                 }
             )
     else:
-        st.error("Não foi possível carregar a planilha de pedidos. Verifique se o arquivo existe ou a conexão.")
+        st.error("Não foi possível carregar a planilha de pedidos. Verifique se o arquivo existe.")

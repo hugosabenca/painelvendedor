@@ -129,6 +129,14 @@ else:
 
     if df_total is not None and not df_total.empty:
         
+        # --- LIMPEZA DE DADOS (NOVO) ---
+        # Remove linhas onde "Número do Pedido" está vazio ou é "None"
+        df_total = df_total.dropna(subset=["Número do Pedido"])
+        # Garante que remove strings vazias ou espaços em branco
+        df_total = df_total[df_total["Número do Pedido"].astype(str).str.strip() != ""]
+        # Remove a palavra literal "None" ou "nan" caso tenha vindo como texto
+        df_total = df_total[~df_total["Número do Pedido"].astype(str).str.lower().isin(["none", "nan"])]
+
         tipo_usuario = st.session_state['usuario_tipo'].lower()
         nome_filtro = st.session_state['usuario_filtro']
         
@@ -167,14 +175,14 @@ else:
             colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
             df_final = df_filtrado[colunas_finais]
 
-            # KPI Cards
+            # KPI Cards (NOMES ATUALIZADOS)
             total_pedidos = len(df_filtrado)
             total_peso = df_filtrado['Quantidade_Num'].sum()
             total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
             kpi1, kpi2 = st.columns(2)
-            kpi1.metric("📦 Pedidos na Visão", total_pedidos)
-            kpi2.metric("⚖️ Volume Total (Tons)", total_peso_str)
+            kpi1.metric("Itens Programados:", total_pedidos)
+            kpi2.metric("Volume Total (Tons):", total_peso_str)
             
             st.divider()
             

@@ -5,7 +5,18 @@ import pandas as pd
 # --- CONFIGURAÇÕES ---
 ABAS_MAQUINAS = ["Fagor", "Esquadros", "Marafon", "Divimec (Slitter)", "Divimec (Rebaixamento)"]
 
-st.set_page_config(page_title="Portal Vendedor Dox", page_icon="🏭", layout="wide")
+# 1. Configuração da Página com o Ícone da Dox na aba do navegador
+st.set_page_config(
+    page_title="Portal Vendedor Dox", 
+    page_icon="logodox.png",  # Usa o logo na aba do navegador
+    layout="wide"
+)
+
+# 2. Configuração do Logo no Menu Lateral (canto superior esquerdo)
+try:
+    st.logo("logodox.png")
+except Exception:
+    pass # Se não achar a imagem, ignora e segue sem logo
 
 # --- CONEXÃO COM GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)

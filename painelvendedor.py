@@ -1,28 +1,28 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
+from datetime import datetime
 
 # --- CONFIGURAÇÕES ---
 ABAS_MAQUINAS = ["Fagor", "Esquadros", "Marafon", "Divimec (Slitter)", "Divimec (Rebaixamento)"]
 
-# 1. Configuração da Página com o Ícone da Dox na aba do navegador
+# 1. Configuração da Página com o Ícone da Dox
 st.set_page_config(
     page_title="Portal Vendedor Dox", 
-    page_icon="logodox.png",  # Usa o logo na aba do navegador
+    page_icon="logodox.png",
     layout="wide"
 )
 
-# 2. Configuração do Logo no Menu Lateral (canto superior esquerdo)
+# 2. Configuração do Logo no Menu
 try:
     st.logo("logodox.png")
 except Exception:
-    pass # Se não achar a imagem, ignora e segue sem logo
+    pass 
 
 # --- CONEXÃO COM GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 def carregar_usuarios():
-    """Lê a aba 'Usuarios' para validar login"""
     try:
         df_users = conn.read(worksheet="Usuarios", ttl=0)
         df_users = df_users.astype(str)
@@ -32,7 +32,6 @@ def carregar_usuarios():
         return pd.DataFrame()
 
 def carregar_dados_pedidos():
-    """Lê todas as abas de máquinas"""
     dados_consolidados = []
     
     for aba in ABAS_MAQUINAS:
@@ -40,7 +39,6 @@ def carregar_dados_pedidos():
             df = conn.read(worksheet=aba, ttl=0)
             df['Máquina/Processo'] = aba
             
-            # Colunas necessárias (incluindo Gerente)
             cols_necessarias = ["Número do Pedido", "Cliente Correto", "Produto", "Quantidade", "Prazo", "Vendedor Correto", "Gerente Correto"]
             cols_existentes = [c for c in cols_necessarias if c in df.columns]
             
@@ -54,7 +52,7 @@ def carregar_dados_pedidos():
         return pd.concat(dados_consolidados, ignore_index=True)
     return pd.DataFrame()
 
-# --- FUNÇÃO DE FORMATAÇÃO ---
+# --- FUNÇÃO DE FORMATAÇÃO DE PESO ---
 def formatar_peso_brasileiro(valor):
     try:
         if pd.isna(valor) or valor == "": return "0"
@@ -129,18 +127,15 @@ else:
 
     if df_total is not None and not df_total.empty:
         
-        # --- LIMPEZA DE DADOS (NOVO) ---
-        # Remove linhas onde "Número do Pedido" está vazio ou é "None"
+        # --- 1. LIMPEZA DE DADOS ---
         df_total = df_total.dropna(subset=["Número do Pedido"])
-        # Garante que remove strings vazias ou espaços em branco
         df_total = df_total[df_total["Número do Pedido"].astype(str).str.strip() != ""]
-        # Remove a palavra literal "None" ou "nan" caso tenha vindo como texto
         df_total = df_total[~df_total["Número do Pedido"].astype(str).str.lower().isin(["none", "nan"])]
 
+        # --- 2. FILTROS DE PERMISSÃO ---
         tipo_usuario = st.session_state['usuario_tipo'].lower()
         nome_filtro = st.session_state['usuario_filtro']
         
-        # 1. Filtro de Permissão (Quem vê o quê)
         if tipo_usuario == "admin":
             vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().astype(str).unique())
             filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
@@ -162,10 +157,18 @@ else:
         if df_filtrado.empty:
             st.info(f"Nenhum pedido pendente encontrado.")
         else:
-            # 2. Formatação e Seleção de Colunas
+            # --- 3. TRATAMENTO DE DADOS (PESO E DATA) ---
+            
+            # Peso
             df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
             df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
             
+            # Data (CORREÇÃO AQUI)
+            # Converte para data forçando o dia primeiro (dayfirst=True)
+            df_filtrado['Prazo'] = pd.to_datetime(df_filtrado['Prazo'], dayfirst=True, errors='coerce')
+            # Formata de volta para String no padrão BR (dd/mm/aaaa) para exibir corretamente
+            df_filtrado['Prazo'] = df_filtrado['Prazo'].dt.strftime('%d/%m/%Y').fillna("-")
+
             # Ordem das colunas
             colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
             
@@ -175,7 +178,7 @@ else:
             colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
             df_final = df_filtrado[colunas_finais]
 
-            # KPI Cards (NOMES ATUALIZADOS)
+            # KPI Cards
             total_pedidos = len(df_filtrado)
             total_peso = df_filtrado['Quantidade_Num'].sum()
             total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
@@ -186,12 +189,10 @@ else:
             
             st.divider()
             
-            # --- 3. NOVO FILTRO DE BUSCA GERAL ---
+            # --- 4. FILTRO DE BUSCA GERAL ---
             texto_busca = st.text_input("🔍 Filtro:", placeholder="Digite cliente, pedido, produto ou máquina...")
 
             if texto_busca:
-                # Converte tudo para texto e busca em qualquer coluna
-                # case=False faz ignorar maiuscula/minuscula
                 mask = df_final.astype(str).apply(
                     lambda x: x.str.contains(texto_busca, case=False, na=False)
                 ).any(axis=1)
@@ -200,13 +201,14 @@ else:
             else:
                 df_exibicao = df_final
 
-            # 4. Tabela Final
+            # 5. Tabela Final
             st.dataframe(
                 df_exibicao, 
                 hide_index=True,
                 use_container_width=True,
                 column_config={
-                    "Prazo": st.column_config.DateColumn("Previsão", format="DD/MM/YYYY"),
+                    # Agora usamos TextColumn porque já formatamos a data como string na mão
+                    "Prazo": st.column_config.TextColumn("Previsão"),
                 }
             )
             

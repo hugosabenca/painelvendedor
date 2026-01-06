@@ -5,7 +5,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(
-    page_title="Painel do Vendedor Dox", # Alterado aqui
+    page_title="Painel do Vendedor Dox",
     page_icon="logodox.png",
     layout="wide"
 )
@@ -22,7 +22,6 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # --- FUNÇÕES DE CARREGAMENTO E SALVAMENTO ---
 
 def carregar_usuarios():
-    """Lê a aba 'Usuarios' para validar login"""
     try:
         df_users = conn.read(worksheet="Usuarios", ttl=0)
         df_users = df_users.astype(str)
@@ -32,21 +31,15 @@ def carregar_usuarios():
         return pd.DataFrame()
 
 def carregar_solicitacoes():
-    """Lê a aba 'Solicitacoes' para o Admin ver"""
     try:
         df = conn.read(worksheet="Solicitacoes", ttl=0)
         return df
     except Exception:
-        # Se a aba não existir ou estiver vazia, retorna DF vazio com colunas padrão
         return pd.DataFrame(columns=["Nome", "Email", "Login", "Senha", "Data", "Status"])
 
 def salvar_nova_solicitacao(nome, email, login, senha):
-    """Salva o pedido de cadastro na aba 'Solicitacoes'"""
     try:
-        # 1. Carrega dados atuais
         df_existente = carregar_solicitacoes()
-        
-        # 2. Cria nova linha
         nova_linha = pd.DataFrame([{
             "Nome": nome,
             "Email": email,
@@ -55,8 +48,6 @@ def salvar_nova_solicitacao(nome, email, login, senha):
             "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
             "Status": "Pendente"
         }])
-        
-        # 3. Junta e Salva
         df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
         conn.update(worksheet="Solicitacoes", data=df_final)
         return True
@@ -65,7 +56,6 @@ def salvar_nova_solicitacao(nome, email, login, senha):
         return False
 
 def carregar_dados_pedidos():
-    """Lê todas as abas de máquinas"""
     ABAS_MAQUINAS = ["Fagor", "Esquadros", "Marafon", "Divimec (Slitter)", "Divimec (Rebaixamento)"]
     dados_consolidados = []
     
@@ -97,6 +87,102 @@ def formatar_peso_brasileiro(valor):
         return texto
     except:
         return str(valor)
+
+# --- FUNÇÃO PRINCIPAL DE EXIBIÇÃO DA CARTEIRA ---
+# Esta função isola toda a lógica de mostrar os pedidos.
+# Assim podemos chamá-la dentro da aba do Admin ou na tela principal do Vendedor.
+def exibir_carteira_pedidos():
+    titulo_prefixo = "Carteira de Pedidos"
+    if st.session_state['usuario_tipo'].lower() == "gerente":
+        titulo_prefixo = "Gerência de Carteira"
+    
+    st.title(f"{titulo_prefixo}: {st.session_state['usuario_nome']}")
+
+    df_total = carregar_dados_pedidos()
+
+    if df_total is not None and not df_total.empty:
+        
+        # Limpeza
+        df_total = df_total.dropna(subset=["Número do Pedido"])
+        df_total = df_total[df_total["Número do Pedido"].astype(str).str.strip() != ""]
+        df_total = df_total[~df_total["Número do Pedido"].astype(str).str.lower().isin(["none", "nan"])]
+
+        # Filtros de Permissão
+        tipo_usuario = st.session_state['usuario_tipo'].lower()
+        nome_filtro = st.session_state['usuario_filtro']
+        
+        if tipo_usuario == "admin":
+            vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().astype(str).unique())
+            filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
+            
+            if filtro_vendedor != "Todos":
+                df_filtrado = df_total[df_total["Vendedor Correto"].astype(str) == filtro_vendedor].copy()
+            else:
+                df_filtrado = df_total.copy()
+                
+        elif tipo_usuario == "gerente":
+            if "Gerente Correto" in df_total.columns:
+                df_filtrado = df_total[df_total["Gerente Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
+            else:
+                df_filtrado = pd.DataFrame()
+        else:
+            df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
+
+        if df_filtrado.empty:
+            st.info(f"Nenhum pedido pendente encontrado.")
+        else:
+            # Tratamento
+            df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
+            df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
+            
+            df_filtrado['Prazo'] = pd.to_datetime(df_filtrado['Prazo'], dayfirst=True, errors='coerce')
+            df_filtrado['Prazo'] = df_filtrado['Prazo'].dt.strftime('%d/%m/%Y').fillna("-")
+
+            colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
+            
+            if tipo_usuario in ["admin", "gerente"]:
+                colunas_visiveis.insert(5, "Vendedor Correto")
+            
+            colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
+            df_final = df_filtrado[colunas_finais]
+
+            # KPIs
+            total_pedidos = len(df_filtrado)
+            total_peso = df_filtrado['Quantidade_Num'].sum()
+            total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+            kpi1, kpi2 = st.columns(2)
+            kpi1.metric("Itens Programados:", total_pedidos)
+            kpi2.metric("Volume Total (Tons):", total_peso_str)
+            
+            st.divider()
+            
+            # Filtro de Busca
+            texto_busca = st.text_input("🔍 Filtro:", placeholder="Digite cliente, pedido, produto ou máquina...")
+
+            if texto_busca:
+                mask = df_final.astype(str).apply(
+                    lambda x: x.str.contains(texto_busca, case=False, na=False)
+                ).any(axis=1)
+                df_exibicao = df_final[mask]
+            else:
+                df_exibicao = df_final
+
+            # Tabela
+            st.dataframe(
+                df_exibicao, 
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "Prazo": st.column_config.TextColumn("Previsão"),
+                }
+            )
+            
+            if texto_busca and df_exibicao.empty:
+                st.warning(f"Nenhum resultado encontrado para '{texto_busca}'")
+    else:
+        st.error("Não foi possível carregar a planilha de pedidos.")
+
 
 # --- GESTÃO DE ESTADO (SESSÃO) ---
 if 'logado' not in st.session_state:
@@ -137,7 +223,6 @@ if not st.session_state['logado']:
             if not nome_completo or not email_user or not novo_login or not nova_senha:
                 st.warning("Por favor, preencha todos os campos.")
             else:
-                # Validação 1: Verificar se usuário já existe na base oficial
                 df_users = carregar_usuarios()
                 login_existe = False
                 if not df_users.empty and 'Login' in df_users.columns:
@@ -145,10 +230,8 @@ if not st.session_state['logado']:
                          login_existe = True
                 
                 if login_existe:
-                    # Alterado aqui conforme solicitado
                     st.error("Este login já está em uso por outro usuário. Escolha outro.")
                 else:
-                    # Validação 2: Verificar se já tem solicitação pendente
                     df_solic = carregar_solicitacoes()
                     solic_existe = False
                     if not df_solic.empty and 'Login' in df_solic.columns:
@@ -158,14 +241,12 @@ if not st.session_state['logado']:
                     if solic_existe:
                         st.warning("Já existe uma solicitação pendente para este login. Aguarde a aprovação.")
                     else:
-                        # Salva
                         sucesso = salvar_nova_solicitacao(nome_completo, email_user, novo_login, nova_senha)
                         if sucesso:
                             st.success("✅ Solicitação enviada com sucesso! Aguarde um e-mail informando quando seu cadastro estiver concluído.")
     
     # --- TELA DE LOGIN (PADRÃO) ---
     else:
-        # Alterado aqui conforme solicitado
         st.title("🔒 Login - Painel do Vendedor - Dox Brasil")
         st.markdown("Entre com suas credenciais para visualizar a carteira.")
         
@@ -220,125 +301,29 @@ else:
 
     # --- DEFINIÇÃO DO CONTEÚDO PRINCIPAL ---
     
-    # Se for ADMIN, mostramos ABAS para ele navegar entre Carteira e Solicitações
+    # SE FOR ADMIN: MOSTRA ABAS
     if st.session_state['usuario_tipo'].lower() == "admin":
         aba1, aba2 = st.tabs(["📂 Carteira de Pedidos", "📝 Solicitações de Acesso"])
         
-        # ABA 1: O Painel Normal
+        # ABA 1: Chama a função que desenha a carteira
         with aba1:
-            exibir_painel_pedidos = True
+            exibir_carteira_pedidos()
         
         # ABA 2: Gestão de Cadastros
         with aba2:
-            exibir_painel_pedidos = False
             st.subheader("Gerenciamento de Solicitações de Cadastro")
             st.info("Aqui estão os usuários que pediram acesso pelo site. Copie os dados para a aba 'Usuarios' do Excel para aprovar.")
             
             df_solicitacoes = carregar_solicitacoes()
             if not df_solicitacoes.empty:
-                # Mostra a tabela
                 st.dataframe(df_solicitacoes, use_container_width=True)
                 
-                # Botão para recarregar
                 if st.button("Atualizar Lista de Solicitações"):
                     st.cache_data.clear()
                     st.rerun()
             else:
                 st.info("Nenhuma solicitação pendente no momento.")
 
+    # SE NÃO FOR ADMIN: MOSTRA DIRETO A CARTEIRA
     else:
-        # Se não for admin, vê direto o painel, sem abas extras
-        exibir_painel_pedidos = True
-
-    # --- RENDERIZAÇÃO DO PAINEL DE PEDIDOS (Lógica original) ---
-    if exibir_painel_pedidos:
-        titulo_prefixo = "Carteira de Pedidos"
-        if st.session_state['usuario_tipo'].lower() == "gerente":
-            titulo_prefixo = "Gerência de Carteira"
-        
-        st.title(f"{titulo_prefixo}: {st.session_state['usuario_nome']}")
-
-        df_total = carregar_dados_pedidos()
-
-        if df_total is not None and not df_total.empty:
-            
-            # Limpeza
-            df_total = df_total.dropna(subset=["Número do Pedido"])
-            df_total = df_total[df_total["Número do Pedido"].astype(str).str.strip() != ""]
-            df_total = df_total[~df_total["Número do Pedido"].astype(str).str.lower().isin(["none", "nan"])]
-
-            # Filtros de Permissão
-            tipo_usuario = st.session_state['usuario_tipo'].lower()
-            nome_filtro = st.session_state['usuario_filtro']
-            
-            if tipo_usuario == "admin":
-                vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().astype(str).unique())
-                filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
-                
-                if filtro_vendedor != "Todos":
-                    df_filtrado = df_total[df_total["Vendedor Correto"].astype(str) == filtro_vendedor].copy()
-                else:
-                    df_filtrado = df_total.copy()
-                    
-            elif tipo_usuario == "gerente":
-                if "Gerente Correto" in df_total.columns:
-                    df_filtrado = df_total[df_total["Gerente Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
-                else:
-                    df_filtrado = pd.DataFrame()
-            else:
-                df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
-
-            if df_filtrado.empty:
-                st.info(f"Nenhum pedido pendente encontrado.")
-            else:
-                # Tratamento
-                df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
-                df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
-                
-                df_filtrado['Prazo'] = pd.to_datetime(df_filtrado['Prazo'], dayfirst=True, errors='coerce')
-                df_filtrado['Prazo'] = df_filtrado['Prazo'].dt.strftime('%d/%m/%Y').fillna("-")
-
-                colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
-                
-                if tipo_usuario in ["admin", "gerente"]:
-                    colunas_visiveis.insert(5, "Vendedor Correto")
-                
-                colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
-                df_final = df_filtrado[colunas_finais]
-
-                # KPIs
-                total_pedidos = len(df_filtrado)
-                total_peso = df_filtrado['Quantidade_Num'].sum()
-                total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-                kpi1, kpi2 = st.columns(2)
-                kpi1.metric("Itens Programados:", total_pedidos)
-                kpi2.metric("Volume Total (Tons):", total_peso_str)
-                
-                st.divider()
-                
-                # Filtro de Busca
-                texto_busca = st.text_input("🔍 Filtro:", placeholder="Digite cliente, pedido, produto ou máquina...")
-
-                if texto_busca:
-                    mask = df_final.astype(str).apply(
-                        lambda x: x.str.contains(texto_busca, case=False, na=False)
-                    ).any(axis=1)
-                    df_exibicao = df_final[mask]
-                else:
-                    df_exibicao = df_final
-
-                # Tabela
-                st.dataframe(
-                    df_exibicao, 
-                    hide_index=True,
-                    use_container_width=True,
-                    column_config={
-                        "Prazo": st.column_config.TextColumn("Previsão"),
-                    }
-                )
-                
-                if texto_busca and df_exibicao.empty:
-                    st.warning(f"Nenhum resultado encontrado para '{texto_busca}'")
-        else:
-            st.error("Não foi possível carregar a planilha de pedidos.")
+        exibir_carteira_pedidos()

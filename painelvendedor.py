@@ -5,7 +5,7 @@ from datetime import datetime
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(
-    page_title="Portal Vendedor Dox", 
+    page_title="Painel do Vendedor Dox", # Alterado aqui
     page_icon="logodox.png",
     layout="wide"
 )
@@ -145,9 +145,10 @@ if not st.session_state['logado']:
                          login_existe = True
                 
                 if login_existe:
-                    st.error("Este login já está em uso por um vendedor ativo. Escolha outro.")
+                    # Alterado aqui conforme solicitado
+                    st.error("Este login já está em uso por outro usuário. Escolha outro.")
                 else:
-                    # Validação 2: Verificar se já tem solicitação pendente (Opcional, mas bom)
+                    # Validação 2: Verificar se já tem solicitação pendente
                     df_solic = carregar_solicitacoes()
                     solic_existe = False
                     if not df_solic.empty and 'Login' in df_solic.columns:
@@ -161,11 +162,11 @@ if not st.session_state['logado']:
                         sucesso = salvar_nova_solicitacao(nome_completo, email_user, novo_login, nova_senha)
                         if sucesso:
                             st.success("✅ Solicitação enviada com sucesso! Aguarde um e-mail informando quando seu cadastro estiver concluído.")
-                            # Opcional: Voltar para login automaticamente ou deixar a pessoa ler
     
     # --- TELA DE LOGIN (PADRÃO) ---
     else:
-        st.title("🔒 Login - PCP Dox Brasil")
+        # Alterado aqui conforme solicitado
+        st.title("🔒 Login - Painel do Vendedor - Dox Brasil")
         st.markdown("Entre com suas credenciais para visualizar a carteira.")
         
         col1, col2, col3 = st.columns([1, 1, 2])
@@ -238,7 +239,7 @@ else:
                 # Mostra a tabela
                 st.dataframe(df_solicitacoes, use_container_width=True)
                 
-                # Botão para recarregar (caso você tenha limpado a planilha e queira ver se sumiu)
+                # Botão para recarregar
                 if st.button("Atualizar Lista de Solicitações"):
                     st.cache_data.clear()
                     st.rerun()

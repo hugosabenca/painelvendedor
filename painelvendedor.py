@@ -91,7 +91,10 @@ def formatar_peso_brasileiro(valor):
 # --- FUNÇÃO PRINCIPAL DE EXIBIÇÃO DA CARTEIRA ---
 def exibir_carteira_pedidos():
     titulo_prefixo = "Carteira de Pedidos"
-    if st.session_state['usuario_tipo'].lower() == "gerente":
+    tipo_usuario = st.session_state['usuario_tipo'].lower()
+    
+    # Ajuste do Título conforme o perfil
+    if "gerente" in tipo_usuario: # Pega tanto "gerente" quanto "gerente comercial"
         titulo_prefixo = "Gerência de Carteira"
     
     st.title(f"{titulo_prefixo}: {st.session_state['usuario_nome']}")
@@ -105,29 +108,30 @@ def exibir_carteira_pedidos():
         df_total = df_total[df_total["Número do Pedido"].astype(str).str.strip() != ""]
         df_total = df_total[~df_total["Número do Pedido"].astype(str).str.lower().isin(["none", "nan"])]
 
-        # Filtros de Permissão
-        tipo_usuario = st.session_state['usuario_tipo'].lower()
+        # --- LÓGICA DE FILTROS (NOVA) ---
         nome_filtro = st.session_state['usuario_filtro']
         
-        if tipo_usuario == "admin":
+        # 1. ADMIN ou GERENTE (GERAL) -> Veem tudo
+        if tipo_usuario in ["admin", "gerente"]:
             vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().astype(str).unique())
-            filtro_vendedor = st.selectbox("Filtrar Vendedor (Admin)", ["Todos"] + vendedores_unicos)
+            # Texto do filtro muda levemente para indicar o poder
+            label_filtro = f"Filtrar Vendedor ({tipo_usuario.capitalize()})"
+            filtro_vendedor = st.selectbox(label_filtro, ["Todos"] + vendedores_unicos)
             
             if filtro_vendedor != "Todos":
-                # Admin continua usando filtro exato para poder escolher um específico da lista
                 df_filtrado = df_total[df_total["Vendedor Correto"].astype(str) == filtro_vendedor].copy()
             else:
                 df_filtrado = df_total.copy()
                 
-        elif tipo_usuario == "gerente":
+        # 2. GERENTE COMERCIAL -> Vê apenas sua equipe (pela coluna Gerente Correto)
+        elif tipo_usuario == "gerente comercial":
             if "Gerente Correto" in df_total.columns:
                 df_filtrado = df_total[df_total["Gerente Correto"].astype(str).str.lower() == nome_filtro.lower()].copy()
             else:
                 df_filtrado = pd.DataFrame()
+
+        # 3. VENDEDOR -> Vê apenas seus pedidos (Busca parcial no nome)
         else:
-            # --- MUDANÇA AQUI ---
-            # Antes: Usava == (Igualdade estrita)
-            # Agora: Usa str.contains (Contém) com regex=False para evitar erro com pontos
             df_filtrado = df_total[df_total["Vendedor Correto"].astype(str).str.lower().str.contains(nome_filtro.lower(), regex=False)].copy()
 
         if df_filtrado.empty:
@@ -142,7 +146,8 @@ def exibir_carteira_pedidos():
 
             colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
             
-            if tipo_usuario in ["admin", "gerente"]:
+            # Se for Admin, Gerente (Geral) ou Gerente Comercial, mostra a coluna Vendedor
+            if tipo_usuario in ["admin", "gerente", "gerente comercial"]:
                 colunas_visiveis.insert(5, "Vendedor Correto")
             
             colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
@@ -303,7 +308,7 @@ else:
 
     # --- DEFINIÇÃO DO CONTEÚDO PRINCIPAL ---
     
-    # SE FOR ADMIN: MOSTRA ABAS
+    # SE FOR ADMIN: MOSTRA ABAS (Carteira + Solicitações)
     if st.session_state['usuario_tipo'].lower() == "admin":
         aba1, aba2 = st.tabs(["📂 Carteira de Pedidos", "📝 Solicitações de Acesso"])
         
@@ -326,6 +331,7 @@ else:
             else:
                 st.info("Nenhuma solicitação pendente no momento.")
 
-    # SE NÃO FOR ADMIN: MOSTRA DIRETO A CARTEIRA
+    # SE FOR OUTRO PERFIL (Gerente, Gerente Comercial, Vendedor): 
+    # Vê direto a Carteira (a função interna que decide se vê tudo ou só a equipe)
     else:
         exibir_carteira_pedidos()

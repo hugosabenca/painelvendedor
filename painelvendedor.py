@@ -566,13 +566,18 @@ else:
             if st.button("Atualizar Logs"): st.cache_data.clear(); st.rerun()
         with aba6: exibir_aba_faturamento()
 
-    else:
-        # USUÁRIO COMUM: 3 ABAS (Pedidos, Certificados, Notas)
-        aba1, aba2, aba3 = st.tabs([
+else:
+        # USUÁRIO COMUM (Vendedor)
+        # Mudei para receber apenas 2 variáveis (aba1 e aba2)
+        # E comentei a aba de Notas Fiscais com #
+        
+        aba1, aba2 = st.tabs([
             "📂 Carteira de Pedidos", 
-            "📑 Certificados",
-            #"🧾 Notas Fiscais" # Nova
+            "📑 Certificados"
+            # "🧾 Notas Fiscais"  <-- Ocultado temporariamente
         ])
+        
         with aba1: exibir_carteira_pedidos()
         with aba2: exibir_aba_certificados(is_admin=False)
-        #with aba3: exibir_aba_notas() # Nova Função
+        
+        # with aba3: exibir_aba_notas() <-- Ocultado temporariamente

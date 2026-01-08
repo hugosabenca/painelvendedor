@@ -1,11 +1,12 @@
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+import altair as alt
 
 # ==============================================================================
-# CONFIGURAÇÕES GERAIS
+# CONFIGURAÇÕES GERAIS E ÍCONE
 # ==============================================================================
 st.set_page_config(
     page_title="Painel do Vendedor Dox",
@@ -13,21 +14,57 @@ st.set_page_config(
     layout="wide"
 )
 
-# Define o Fuso Horário do Brasil
 FUSO_BR = pytz.timezone('America/Sao_Paulo')
 
-# --- LOGO NO MENU ---
 try:
     st.logo("logodox.png")
 except Exception:
     pass 
 
-# --- CONEXÃO COM GOOGLE SHEETS ---
 conn = st.connection("gsheets", type=GSheetsConnection)
 
 # ==============================================================================
-# FUNÇÕES DE BANCO DE DADOS (CARREGAR E SALVAR)
+# FUNÇÕES DE BANCO DE DADOS (LEITURA)
 # ==============================================================================
+
+def carregar_dados_faturamento_nuvem():
+    try:
+        df = conn.read(worksheet="Dados_Faturamento", ttl=0)
+        
+        if df.empty:
+            return pd.DataFrame()
+
+        # 1. Tratamento básico
+        if df['TONS'].dtype == object:
+             df['TONS'] = df['TONS'].astype(str).str.replace(',', '.')
+        df['TONS'] = pd.to_numeric(df['TONS'], errors='coerce').fillna(0)
+        df['DATA_EMISSAO'] = pd.to_datetime(df['DATA_EMISSAO'], format='%d/%m/%Y', errors='coerce')
+        
+        # 2. CRIAR RÉGUA DE DATAS (ÚLTIMOS 7 DIAS FIXOS)
+        hoje = datetime.now()
+        datas_fixas = [(hoje - timedelta(days=i)).strftime('%d/%m/%Y') for i in range(6, -1, -1)]
+        df_base = pd.DataFrame({'Data_Str': datas_fixas})
+        
+        # 3. Preparar dados do banco
+        df['Data_Str'] = df['DATA_EMISSAO'].dt.strftime('%d/%m/%Y')
+        df_agrupado = df.groupby('Data_Str')[['TONS']].sum().reset_index()
+        
+        # 4. CRUZAMENTO (MERGE) E CRIAÇÃO DO RÓTULO COM VALOR
+        df_final = pd.merge(df_base, df_agrupado, on='Data_Str', how='left')
+        df_final['TONS'] = df_final['TONS'].fillna(0)
+        
+        # Cria a coluna Label: Data + Quebra de Linha + Valor Formatado
+        def formatar_rotulo(row):
+            valor_fmt = f"{row['TONS']:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"{row['Data_Str']}\n{valor_fmt}"
+            
+        df_final['Label_X'] = df_final.apply(formatar_rotulo, axis=1)
+        
+        return df_final
+
+    except Exception as e:
+        st.error(f"Erro ao ler faturamento da nuvem: {e}")
+        return pd.DataFrame()
 
 def carregar_usuarios():
     try:
@@ -76,105 +113,6 @@ def carregar_logs_acessos():
     except Exception:
         return pd.DataFrame(columns=["Data", "Login", "Nome"])
 
-def registrar_acesso(login, nome):
-    try:
-        try:
-            df_logs = conn.read(worksheet="Acessos", ttl=0)
-        except:
-            df_logs = pd.DataFrame(columns=["Data", "Login", "Nome"])
-            
-        if df_logs.empty and "Data" not in df_logs.columns:
-             df_logs = pd.DataFrame(columns=["Data", "Login", "Nome"])
-
-        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M:%S")
-
-        novo_log = pd.DataFrame([{
-            "Data": agora_br,
-            "Login": login,
-            "Nome": nome
-        }])
-        
-        df_final = pd.concat([df_logs, novo_log], ignore_index=True)
-        conn.update(worksheet="Acessos", data=df_final)
-    except Exception as e:
-        print(f"Erro ao registrar log: {e}")
-
-def salvar_nova_solicitacao(nome, email, login, senha):
-    try:
-        df_existente = carregar_solicitacoes()
-        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
-
-        nova_linha = pd.DataFrame([{
-            "Nome": nome,
-            "Email": email,
-            "Login": login,
-            "Senha": senha,
-            "Data": agora_br,
-            "Status": "Pendente"
-        }])
-        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
-        conn.update(worksheet="Solicitacoes", data=df_final)
-        return True
-    except Exception as e:
-        st.error(f"Erro ao salvar solicitação: {e}")
-        return False
-
-def salvar_solicitacao_foto(vendedor_nome, vendedor_email, lote):
-    try:
-        try:
-            df_existente = conn.read(worksheet="Solicitacoes_Fotos", ttl=0)
-        except:
-            df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
-        
-        if df_existente.empty and "Data" not in df_existente.columns:
-             df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
-
-        lote_formatado = f"'{lote}"
-        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
-
-        nova_linha = pd.DataFrame([{
-            "Data": agora_br,
-            "Vendedor": vendedor_nome,
-            "Email": vendedor_email,
-            "Lote": lote_formatado,
-            "Status": "Pendente"
-        }])
-        
-        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
-        conn.update(worksheet="Solicitacoes_Fotos", data=df_final)
-        return True
-    except Exception as e:
-        st.error(f"Erro ao salvar pedido de foto: {e}")
-        return False
-
-def salvar_solicitacao_certificado(vendedor_nome, vendedor_email, lote):
-    try:
-        try:
-            df_existente = conn.read(worksheet="Solicitacoes_Certificados", ttl=0)
-        except:
-            df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
-        
-        if df_existente.empty and "Data" not in df_existente.columns:
-             df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
-
-        lote_formatado = f"'{lote}"
-        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
-
-        nova_linha = pd.DataFrame([{
-            "Data": agora_br,
-            "Vendedor": vendedor_nome,
-            "Email": vendedor_email,
-            "Lote": lote_formatado,
-            "Status": "Pendente"
-        }])
-        
-        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
-        conn.update(worksheet="Solicitacoes_Certificados", data=df_final)
-        return True
-    except Exception as e:
-        st.error(f"Erro ao salvar pedido de certificado: {e}")
-        return False
-
 def carregar_dados_pedidos():
     ABAS_MAQUINAS = ["Fagor", "Esquadros", "Marafon", "Divimec (Slitter)", "Divimec (Rebaixamento)"]
     dados_consolidados = []
@@ -189,7 +127,6 @@ def carregar_dados_pedidos():
             
             if "Vendedor Correto" in cols_existentes:
                 df_limpo = df[cols_existentes + ['Máquina/Processo']].copy()
-                
                 if "Número do Pedido" in df_limpo.columns:
                     df_limpo["Número do Pedido"] = (
                         df_limpo["Número do Pedido"]
@@ -198,7 +135,6 @@ def carregar_dados_pedidos():
                         .str.strip()
                         .str.zfill(6)
                     )
-                
                 dados_consolidados.append(df_limpo)
         except Exception:
             continue
@@ -207,43 +143,166 @@ def carregar_dados_pedidos():
         return pd.concat(dados_consolidados, ignore_index=True)
     return pd.DataFrame()
 
+# ==============================================================================
+# FUNÇÕES DE BANCO DE DADOS (ESCRITA)
+# ==============================================================================
+
+def registrar_acesso(login, nome):
+    try:
+        try:
+            df_logs = conn.read(worksheet="Acessos", ttl=0)
+        except:
+            df_logs = pd.DataFrame(columns=["Data", "Login", "Nome"])
+        if df_logs.empty and "Data" not in df_logs.columns:
+             df_logs = pd.DataFrame(columns=["Data", "Login", "Nome"])
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M:%S")
+        novo_log = pd.DataFrame([{"Data": agora_br, "Login": login, "Nome": nome}])
+        df_final = pd.concat([df_logs, novo_log], ignore_index=True)
+        conn.update(worksheet="Acessos", data=df_final)
+    except Exception as e:
+        print(f"Erro ao registrar log: {e}")
+
+def salvar_nova_solicitacao(nome, email, login, senha):
+    try:
+        df_existente = carregar_solicitacoes()
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+        nova_linha = pd.DataFrame([{"Nome": nome, "Email": email, "Login": login, "Senha": senha, "Data": agora_br, "Status": "Pendente"}])
+        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
+        conn.update(worksheet="Solicitacoes", data=df_final)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar solicitação: {e}")
+        return False
+
+def salvar_solicitacao_foto(vendedor_nome, vendedor_email, lote):
+    try:
+        try:
+            df_existente = conn.read(worksheet="Solicitacoes_Fotos", ttl=0)
+        except:
+            df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
+        if df_existente.empty and "Data" not in df_existente.columns:
+             df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
+        lote_formatado = f"'{lote}"
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+        nova_linha = pd.DataFrame([{"Data": agora_br, "Vendedor": vendedor_nome, "Email": vendedor_email, "Lote": lote_formatado, "Status": "Pendente"}])
+        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
+        conn.update(worksheet="Solicitacoes_Fotos", data=df_final)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar pedido de foto: {e}")
+        return False
+
+def salvar_solicitacao_certificado(vendedor_nome, vendedor_email, lote):
+    try:
+        try:
+            df_existente = conn.read(worksheet="Solicitacoes_Certificados", ttl=0)
+        except:
+            df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
+        if df_existente.empty and "Data" not in df_existente.columns:
+             df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
+        lote_formatado = f"'{lote}"
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+        nova_linha = pd.DataFrame([{"Data": agora_br, "Vendedor": vendedor_nome, "Email": vendedor_email, "Lote": lote_formatado, "Status": "Pendente"}])
+        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
+        conn.update(worksheet="Solicitacoes_Certificados", data=df_final)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar pedido de certificado: {e}")
+        return False
+
+# --- FUNÇÃO NOVA: SALVAR NOTA FISCAL ---
+def salvar_solicitacao_nota(vendedor_nome, vendedor_email, nf_numero):
+    try:
+        try:
+            df_existente = conn.read(worksheet="Solicitacoes_Notas", ttl=0)
+        except:
+            df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "NF", "Status"])
+        
+        if df_existente.empty and "Data" not in df_existente.columns:
+             df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "NF", "Status"])
+
+        nf_str = f"'{nf_numero}"
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+
+        nova_linha = pd.DataFrame([{
+            "Data": agora_br,
+            "Vendedor": vendedor_nome,
+            "Email": vendedor_email,
+            "NF": nf_str,
+            "Status": "Pendente"
+        }])
+        
+        df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
+        conn.update(worksheet="Solicitacoes_Notas", data=df_final)
+        return True
+    except Exception as e:
+        st.error(f"Erro ao salvar pedido de nota: {e}")
+        return False
+
 def formatar_peso_brasileiro(valor):
     try:
         if pd.isna(valor) or valor == "": return "0"
         texto = f"{float(valor):.3f}"
-        texto = texto.replace('.', ',')
-        texto = texto.rstrip('0')
-        texto = texto.rstrip(',')
+        texto = texto.replace('.', ',').rstrip('0').rstrip(',')
         return texto
     except:
         return str(valor)
 
 # ==============================================================================
-# FUNÇÕES DE EXIBIÇÃO (UI)
+# UI - FUNÇÕES DE EXIBIÇÃO
 # ==============================================================================
+
+def exibir_aba_faturamento():
+    st.subheader("📊 Ritmo de Faturamento - Pinheiral (Últimos 7 Dias)")
+    
+    if st.button("🔄 Atualizar Gráfico"):
+        with st.spinner("Buscando dados sincronizados..."):
+            df_fat = carregar_dados_faturamento_nuvem()
+            st.session_state['dados_faturamento'] = df_fat
+    
+    if 'dados_faturamento' in st.session_state and not st.session_state['dados_faturamento'].empty:
+        df_exibicao = st.session_state['dados_faturamento']
+        
+        total_periodo = df_exibicao['TONS'].sum()
+        
+        # Formatação Brasileira do Total
+        total_fmt = f"{total_periodo:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Total Faturado (7 dias)", f"{total_fmt} Ton")
+        
+        # Gráfico Altair Personalizado
+        ordem_grafico = df_exibicao['Label_X'].tolist()
+        
+        grafico = alt.Chart(df_exibicao).mark_bar(size=40, color='#0078D4').encode(
+            x=alt.X('Label_X', sort=ordem_grafico, axis=alt.Axis(title=None, labelAngle=0, labelExpr="split(datum.value, '\\n')")), 
+            y=alt.Y('TONS', title='Toneladas'),
+            tooltip=['Data_Str', 'TONS']
+        ).properties(
+            height=400
+        )
+        
+        st.altair_chart(grafico, use_container_width=True)
+            
+    elif 'dados_faturamento' in st.session_state and st.session_state['dados_faturamento'].empty:
+        st.warning("Nenhum faturamento recente encontrado na planilha de sincronização.")
+    else:
+        st.info("Clique no botão acima para carregar os indicadores.")
 
 def exibir_carteira_pedidos():
     titulo_prefixo = "Carteira de Pedidos"
     tipo_usuario = st.session_state['usuario_tipo'].lower()
-    
     if "gerente" in tipo_usuario: 
         titulo_prefixo = "Gerência de Carteira"
-    
     st.title(f"{titulo_prefixo}: {st.session_state['usuario_nome']}")
-
     df_total = carregar_dados_pedidos()
-
     if df_total is not None and not df_total.empty:
         df_total = df_total.dropna(subset=["Número do Pedido"])
         df_total = df_total[~df_total["Número do Pedido"].isin(["000nan", "00None", "000000"])]
-
         nome_filtro = st.session_state['usuario_filtro']
-        
         if tipo_usuario in ["admin", "gerente"]:
             vendedores_unicos = sorted(df_total["Vendedor Correto"].dropna().unique())
-            label_filtro = f"Filtrar Vendedor ({tipo_usuario.capitalize()})"
-            filtro_vendedor = st.selectbox(label_filtro, ["Todos"] + vendedores_unicos)
-            
+            filtro_vendedor = st.selectbox(f"Filtrar Vendedor ({tipo_usuario.capitalize()})", ["Todos"] + vendedores_unicos)
             if filtro_vendedor != "Todos":
                 df_filtrado = df_total[df_total["Vendedor Correto"] == filtro_vendedor].copy()
             else:
@@ -261,47 +320,31 @@ def exibir_carteira_pedidos():
         else:
             df_filtrado['Quantidade_Num'] = pd.to_numeric(df_filtrado['Quantidade'], errors='coerce').fillna(0)
             df_filtrado['Peso (ton)'] = df_filtrado['Quantidade_Num'].apply(formatar_peso_brasileiro)
-            
             try:
                 df_filtrado['Prazo_dt'] = pd.to_datetime(df_filtrado['Prazo'], dayfirst=True, errors='coerce')
                 df_filtrado['Prazo'] = df_filtrado['Prazo_dt'].dt.strftime('%d/%m/%Y').fillna("-")
-            except:
-                pass
-
+            except: pass
+            
             colunas_visiveis = ["Número do Pedido", "Cliente Correto", "Produto", "Peso (ton)", "Prazo", "Máquina/Processo"]
             if tipo_usuario in ["admin", "gerente", "gerente comercial"]:
                 colunas_visiveis.insert(5, "Vendedor Correto")
-            
             colunas_finais = [c for c in colunas_visiveis if c in df_filtrado.columns]
             df_final = df_filtrado[colunas_finais]
 
             total_pedidos = len(df_filtrado)
             total_peso = df_filtrado['Quantidade_Num'].sum()
             total_peso_str = f"{total_peso:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
             kpi1, kpi2 = st.columns(2)
             kpi1.metric("Itens Programados:", total_pedidos)
             kpi2.metric("Volume Total (Tons):", total_peso_str)
-            
             st.divider()
-            
             texto_busca = st.text_input("🔍 Filtro:", placeholder="Digite cliente, pedido, produto ou máquina...")
-
             if texto_busca:
-                mask = df_final.astype(str).apply(
-                    lambda x: x.str.contains(texto_busca, case=False, na=False)
-                ).any(axis=1)
+                mask = df_final.astype(str).apply(lambda x: x.str.contains(texto_busca, case=False, na=False)).any(axis=1)
                 df_exibicao = df_final[mask]
             else:
                 df_exibicao = df_final
-
-            st.dataframe(
-                df_exibicao, 
-                hide_index=True,
-                use_container_width=True,
-                column_config={"Prazo": st.column_config.TextColumn("Previsão")}
-            )
-            
+            st.dataframe(df_exibicao, hide_index=True, use_container_width=True, column_config={"Prazo": st.column_config.TextColumn("Previsão")})
             if texto_busca and df_exibicao.empty:
                 st.warning(f"Nenhum resultado encontrado para '{texto_busca}'")
     else:
@@ -330,7 +373,6 @@ def exibir_aba_fotos(is_admin=False):
                 sucesso = salvar_solicitacao_foto(st.session_state['usuario_nome'], email_input, lote_input)
                 if sucesso:
                     st.success(f"Solicitação do lote **{lote_input}** enviada! Verifique seu e-mail em breve.")
-
     if is_admin:
         st.divider()
         st.markdown("### 🛠️ Gestão de Pedidos de Fotos (Visão Admin)")
@@ -367,7 +409,6 @@ def exibir_aba_certificados(is_admin=False):
                 sucesso = salvar_solicitacao_certificado(st.session_state['usuario_nome'], email_cert, lote_cert)
                 if sucesso:
                     st.success(f"Solicitação de certificado do lote **{lote_cert}** enviada! Verifique seu e-mail em breve.")
-
     if is_admin:
         st.divider()
         st.markdown("### 🛠️ Gestão de Pedidos de Certificados (Visão Admin)")
@@ -379,6 +420,33 @@ def exibir_aba_certificados(is_admin=False):
                 st.rerun()
         else:
             st.info("Nenhum pedido de certificado registrado ainda.")
+
+# --- FUNÇÃO NOVA: EXIBIR ABA NOTAS FISCAIS ---
+def exibir_aba_notas():
+    st.subheader("🧾 Solicitação de Nota Fiscal (PDF)")
+    st.markdown("""
+        Digite o número da Nota Fiscal para receber o PDF por e-mail.
+        **Atenção:** Por segurança, o sistema só enviará notas que pertençam à sua carteira de clientes.
+    """)
+    with st.form("form_notas"):
+        col_n1, col_n2 = st.columns([1, 2])
+        with col_n1:
+            nf_input = st.text_input("Número da NF (Ex: 71591):")
+        with col_n2:
+            email_padrao = st.session_state.get('usuario_email', '')
+            email_input = st.text_input("Enviar para o e-mail:", value=email_padrao, key="email_nf")
+        
+        btn_pedir_nf = st.form_submit_button("Solicitar NF", type="primary")
+        
+        if btn_pedir_nf:
+            if not nf_input:
+                st.warning("Digite o número da nota.")
+            elif not email_input:
+                st.warning("Preencha o e-mail.")
+            else:
+                sucesso = salvar_solicitacao_nota(st.session_state['usuario_nome'], email_input, nf_input)
+                if sucesso:
+                    st.success(f"Solicitação da NF **{nf_input}** enviada para análise! Se validado, você receberá em breve.")
 
 # --- GESTÃO DE ESTADO (SESSÃO) ---
 if 'logado' not in st.session_state:
@@ -462,18 +530,11 @@ if not st.session_state['logado']:
 else:
     with st.sidebar:
         st.write(f"Bem-vindo, **{st.session_state['usuario_nome'].upper()}**")
-        
-        # --- DATA FORMATADA (PEQUENA, ITÁLICO, SEM EMOJI) ---
         agora = datetime.now(FUSO_BR)
         dias_semana = {0: 'Segunda-feira', 1: 'Terça-feira', 2: 'Quarta-feira', 3: 'Quinta-feira', 4: 'Sexta-feira', 5: 'Sábado', 6: 'Domingo'}
         meses = {1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'}
-        
-        # REMOVIDO O EMOJI 📅
         texto_data = f"{dias_semana[agora.weekday()]}, {agora.day} de {meses[agora.month]} de {agora.year}"
-        
         st.markdown(f"<small><i>{texto_data}</i></small>", unsafe_allow_html=True)
-        # -----------------------------------------------------------
-
         st.caption(f"Perfil: {st.session_state['usuario_tipo']}")
         if st.button("Sair"):
             st.session_state['logado'] = False
@@ -485,43 +546,33 @@ else:
             st.rerun()
 
     if st.session_state['usuario_tipo'].lower() == "admin":
-        aba1, aba2, aba3, aba4 = st.tabs([
+        # ADMIN: 6 ABAS (Pedidos, Acesso, Certificados, Notas, Logs, Faturamento)
+        aba1, aba2, aba3, aba4, aba5, aba6 = st.tabs([
             "📂 Carteira de Pedidos", 
             "📝 Solicitações de Acesso", 
             "📑 Certificados",
-            "🔍 Histórico de Acessos"
+            "🧾 Notas Fiscais",  # Nova
+            "🔍 Histórico de Acessos",
+            "📊 Faturamento"
         ])
-        with aba1:
-            exibir_carteira_pedidos()
-        with aba2:
-            st.subheader("Gerenciamento de Solicitações de Cadastro")
-            st.info("Aqui estão os usuários que pediram acesso pelo site. Copie os dados para a aba 'Usuarios' do Excel para aprovar.")
-            df_solicitacoes = carregar_solicitacoes()
-            if not df_solicitacoes.empty:
-                st.dataframe(df_solicitacoes, use_container_width=True)
-                if st.button("Atualizar Lista de Acessos"):
-                    st.cache_data.clear()
-                    st.rerun()
-            else:
-                st.info("Nenhuma solicitação pendente.")
-        with aba3:
-            exibir_aba_certificados(is_admin=True)
-        with aba4:
-            st.subheader("🔍 Histórico de Logins no Sistema")
-            df_logs = carregar_logs_acessos()
-            if not df_logs.empty:
-                st.dataframe(df_logs, use_container_width=True, hide_index=True)
-                if st.button("Atualizar Logs"):
-                    st.cache_data.clear()
-                    st.rerun()
-            else:
-                st.info("Nenhum registro de acesso encontrado.")
+        with aba1: exibir_carteira_pedidos()
+        with aba2: 
+            st.dataframe(carregar_solicitacoes(), use_container_width=True)
+            if st.button("Atualizar Acessos"): st.cache_data.clear(); st.rerun()
+        with aba3: exibir_aba_certificados(is_admin=True)
+        with aba4: exibir_aba_notas() # Nova Função
+        with aba5: 
+            st.dataframe(carregar_logs_acessos(), use_container_width=True)
+            if st.button("Atualizar Logs"): st.cache_data.clear(); st.rerun()
+        with aba6: exibir_aba_faturamento()
+
     else:
-        aba1, aba2 = st.tabs([
+        # USUÁRIO COMUM: 3 ABAS (Pedidos, Certificados, Notas)
+        aba1, aba2, aba3 = st.tabs([
             "📂 Carteira de Pedidos", 
-            "📑 Certificados"
+            "📑 Certificados",
+            "🧾 Notas Fiscais" # Nova
         ])
-        with aba1:
-            exibir_carteira_pedidos()
-        with aba2:
-            exibir_aba_certificados(is_admin=False)
+        with aba1: exibir_carteira_pedidos()
+        with aba2: exibir_aba_certificados(is_admin=False)
+        with aba3: exibir_aba_notas() # Nova Função

@@ -571,8 +571,8 @@ else:
         aba1, aba2, aba3 = st.tabs([
             "📂 Carteira de Pedidos", 
             "📑 Certificados",
-            "🧾 Notas Fiscais" # Nova
+            #"🧾 Notas Fiscais" # Nova
         ])
         with aba1: exibir_carteira_pedidos()
         with aba2: exibir_aba_certificados(is_admin=False)
-        with aba3: exibir_aba_notas() # Nova Função
+        #with aba3: exibir_aba_notas() # Nova Função

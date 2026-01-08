@@ -566,7 +566,7 @@ else:
             if st.button("Atualizar Logs"): st.cache_data.clear(); st.rerun()
         with aba6: exibir_aba_faturamento()
 
-else:
+    else:
         # USUÁRIO COMUM (Vendedor)
         # Mudei para receber apenas 2 variáveis (aba1 e aba2)
         # E comentei a aba de Notas Fiscais com #

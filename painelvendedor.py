@@ -2,13 +2,19 @@ import streamlit as st
 from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 from datetime import datetime
+import pytz # Biblioteca para corrigir o Fuso Horário
 
-# --- CONFIGURAÇÕES DA PÁGINA ---
+# ==============================================================================
+# CONFIGURAÇÕES GERAIS
+# ==============================================================================
 st.set_page_config(
     page_title="Painel do Vendedor Dox",
     page_icon="logodox.png",
     layout="wide"
 )
+
+# Define o Fuso Horário do Brasil
+FUSO_BR = pytz.timezone('America/Sao_Paulo')
 
 # --- LOGO NO MENU ---
 try:
@@ -65,7 +71,6 @@ def carregar_logs_acessos():
         df = conn.read(worksheet="Acessos", ttl=0)
         # Ordena do mais recente para o mais antigo, se tiver dados
         if not df.empty and "Data" in df.columns:
-             # Tenta converter para data para ordenar, se falhar mantem como string
              try:
                  df["Data_Dt"] = pd.to_datetime(df["Data"], dayfirst=True, errors='coerce')
                  df = df.sort_values(by="Data_Dt", ascending=False).drop(columns=["Data_Dt"])
@@ -76,7 +81,7 @@ def carregar_logs_acessos():
         return pd.DataFrame(columns=["Data", "Login", "Nome"])
 
 def registrar_acesso(login, nome):
-    """Salva o log de acesso na planilha"""
+    """Salva o log de acesso na planilha com horário BR"""
     try:
         try:
             df_logs = conn.read(worksheet="Acessos", ttl=0)
@@ -86,8 +91,11 @@ def registrar_acesso(login, nome):
         if df_logs.empty and "Data" not in df_logs.columns:
              df_logs = pd.DataFrame(columns=["Data", "Login", "Nome"])
 
+        # CORREÇÃO DE HORÁRIO AQUI
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M:%S")
+
         novo_log = pd.DataFrame([{
-            "Data": datetime.now().strftime("%d/%m/%Y %H:%M:%S"),
+            "Data": agora_br,
             "Login": login,
             "Nome": nome
         }])
@@ -95,18 +103,21 @@ def registrar_acesso(login, nome):
         df_final = pd.concat([df_logs, novo_log], ignore_index=True)
         conn.update(worksheet="Acessos", data=df_final)
     except Exception as e:
-        # Falha silenciosa para não travar o login do usuário
         print(f"Erro ao registrar log: {e}")
 
 def salvar_nova_solicitacao(nome, email, login, senha):
     try:
         df_existente = carregar_solicitacoes()
+        
+        # CORREÇÃO DE HORÁRIO AQUI
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
+
         nova_linha = pd.DataFrame([{
             "Nome": nome,
             "Email": email,
             "Login": login,
             "Senha": senha,
-            "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "Data": agora_br,
             "Status": "Pendente"
         }])
         df_final = pd.concat([df_existente, nova_linha], ignore_index=True)
@@ -127,9 +138,12 @@ def salvar_solicitacao_foto(vendedor_nome, vendedor_email, lote):
              df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
 
         lote_formatado = f"'{lote}"
+        
+        # CORREÇÃO DE HORÁRIO AQUI
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
 
         nova_linha = pd.DataFrame([{
-            "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "Data": agora_br,
             "Vendedor": vendedor_nome,
             "Email": vendedor_email,
             "Lote": lote_formatado,
@@ -154,9 +168,12 @@ def salvar_solicitacao_certificado(vendedor_nome, vendedor_email, lote):
              df_existente = pd.DataFrame(columns=["Data", "Vendedor", "Email", "Lote", "Status"])
 
         lote_formatado = f"'{lote}"
+        
+        # CORREÇÃO DE HORÁRIO AQUI
+        agora_br = datetime.now(FUSO_BR).strftime("%d/%m/%Y %H:%M")
 
         nova_linha = pd.DataFrame([{
-            "Data": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "Data": agora_br,
             "Vendedor": vendedor_nome,
             "Email": vendedor_email,
             "Lote": lote_formatado,
@@ -458,7 +475,7 @@ if not st.session_state['logado']:
 
                         st.session_state['usuario_tipo'] = dados_user['Tipo']
                         
-                        # LOG DE ACESSO: Salva na planilha quem entrou e quando
+                        # LOG DE ACESSO: Salva na planilha quem entrou e quando (COM FUSO CORRIGIDO)
                         registrar_acesso(usuario_input, dados_user['Nome Vendedor'])
                         
                         st.rerun()
@@ -493,7 +510,6 @@ else:
     # --- DEFINIÇÃO DO CONTEÚDO PRINCIPAL (ABAS) ---
     
     # 1. PERFIL ADMIN: VÊ 4 ABAS (Carteira, Cadastros, Certificados, Acessos)
-    #    OBS: A aba Fotos foi removida daqui por solicitação.
     if st.session_state['usuario_tipo'].lower() == "admin":
         aba1, aba2, aba3, aba4 = st.tabs([
             "📂 Carteira de Pedidos", 
@@ -532,7 +548,6 @@ else:
                 st.info("Nenhum registro de acesso encontrado.")
 
     # 2. OUTROS PERFIS: VÊ 2 ABAS (Carteira, Certificados)
-    #    OBS: A aba Fotos foi removida daqui.
     else:
         aba1, aba2 = st.tabs([
             "📂 Carteira de Pedidos", 
